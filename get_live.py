@@ -1,115 +1,64 @@
-import requests
+from playwright.sync_api import sync_playwright
+import time
 import re
-import json
 
 def get_all_active_livestreams(channel_url):
-    # Vào tab streams của kênh
     streams_url = channel_url.rstrip('/') + '/streams'
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        # Force tiếng Anh để luôn check được chữ 'watching'
-        "Accept-Language": "en-US,en;q=0.9" 
-    }
-    
-    try:
-        response = requests.get(streams_url, headers=headers)
-        response.raise_for_status()
+    live_streams = []
+
+    print("Khởi động trình duyệt ảo...")
+    with sync_playwright() as p:
+        # Mở Chrome chế độ ẩn (headless)
+        browser = p.chromium.launch(headless=True)
+        # Bắt buộc ngôn ngữ tiếng Anh để dễ bắt chữ "watching"
+        page = browser.new_page(locale="en-US")
         
-        # Bóc tách cục dữ liệu JSON ytInitialData
-        match = re.search(r'var ytInitialData = (\{.*?\});</script>', response.text)
-        if not match:
-            print("Không tìm thấy dữ liệu ytInitialData trên trang.")
-            return []
+        try:
+            print(f"Đang truy cập: {streams_url}")
+            page.goto(streams_url, wait_until="networkidle")
             
-        data = json.loads(match.group(1))
-        live_streams = []
-        
-        def find_live_videos(node):
-            if isinstance(node, list):
-                for item in node:
-                    find_live_videos(item)
-            elif isinstance(node, dict):
-                # FIX LỖI: Kiểm tra nhiều loại thẻ video khác nhau thay vì chỉ 1 loại
-                video_keys = ['videoRenderer', 'gridVideoRenderer', 'compactVideoRenderer', 'richItemRenderer']
+            # Cuộn chuột xuống một chút để YouTube nạp (render) video
+            page.mouse.wheel(0, 1000)
+            time.sleep(3) # Chờ 3 giây cho dữ liệu load hẳn
+            
+            # Quét tất cả các thẻ chứa video trên màn hình
+            videos = page.locator('ytd-rich-grid-media').all()
+            
+            for vid in videos:
+                text_content = vid.inner_text().lower()
                 
-                for key in video_keys:
-                    if key in node:
-                        # Xử lý trường hợp richItemRenderer bọc videoRenderer bên trong
-                        if key == 'richItemRenderer' and 'content' in node[key] and 'videoRenderer' in node[key]['content']:
-                            video = node[key]['content']['videoRenderer']
-                        elif key != 'richItemRenderer':
-                            video = node[key]
-                        else:
-                            continue
-
-                        is_live = False
-                        
-                        # Điều kiện 1: Check qua overlay (nhãn LIVE đỏ trên ảnh)
-                        for overlay in video.get('thumbnailOverlays', []):
-                            time_style = overlay.get('thumbnailOverlayTimeStatusRenderer', {}).get('style', '')
-                            if time_style == 'LIVE':
-                                is_live = True
-                                break
-                                
-                        # Điều kiện 2: Check qua badge ngầm
-                        if not is_live:
-                            for badge in video.get('badges', []):
-                                badge_style = badge.get('metadataBadgeRenderer', {}).get('style', '')
-                                if badge_style == 'BADGE_STYLE_TYPE_LIVE_NOW':
-                                    is_live = True
-                                    break
-                                    
-                        # Điều kiện 3 (QUAN TRỌNG NHẤT FIX LỖI GITHUB ACTIONS): 
-                        # Check xem phần lượt xem có chữ "watching" không (nghĩa là đang có người xem trực tiếp)
-                        if not is_live:
-                            view_runs = video.get('viewCountText', {}).get('runs', [])
-                            for run in view_runs:
-                                text = run.get('text', '').lower()
-                                if 'watching' in text or 'đang xem' in text:
-                                    is_live = True
-                                    break
-                                    
-                        if is_live:
-                            video_id = video.get('videoId')
+                # Nếu video có chữ "watching" nghĩa là ĐANG TRỰC TIẾP
+                if "watching" in text_content:
+                    # Lấy Tiêu đề
+                    title_el = vid.locator('#video-title')
+                    title = title_el.inner_text() if title_el.count() > 0 else "Unknown Title"
+                    
+                    # Lấy Link
+                    link_el = vid.locator('a#thumbnail')
+                    url = "https://www.youtube.com" + link_el.get_attribute('href') if link_el.count() > 0 else ""
+                    
+                    if url:
+                        # Bóc tách Video ID từ link (VD: watch?v=ABCXYZ)
+                        video_id_match = re.search(r'v=([a-zA-Z0-9_-]+)', url)
+                        if video_id_match:
+                            video_id = video_id_match.group(1)
+                            # Tự động gen link ảnh đại diện nét nhất từ server YouTube (không sợ bị lỗi ảnh mờ)
+                            logo_url = f"https://i.ytimg.com/vi/{video_id}/hqdefault_live.jpg"
                             
-                            # Bóc tách Tiêu đề (Title)
-                            title = "Unknown Title"
-                            try:
-                                title = video['title']['runs'][0]['text']
-                            except (KeyError, IndexError):
-                                pass
+                            live_streams.append({
+                                "title": title,
+                                "url": url,
+                                "logo": logo_url
+                            })
                             
-                            # Bóc tách Ảnh đại diện video (Thumbnail) để làm tvg-logo
-                            logo_url = ""
-                            try:
-                                thumbnails = video['thumbnail']['thumbnails']
-                                if thumbnails:
-                                    logo_url = thumbnails[-1]['url'].split('?')[0] 
-                            except (KeyError, IndexError):
-                                pass
-                                
-                            if video_id:
-                                video_url = f"https://www.youtube.com/watch?v={video_id}"
-                                live_streams.append({
-                                    "title": title,
-                                    "url": video_url,
-                                    "logo": logo_url
-                                })
-                
-                # Duyệt tiếp đệ quy
-                for k, v in node.items():
-                    find_live_videos(v)
-
-        find_live_videos(data)
-        
-        # Lọc bỏ các video bị trùng lặp
-        unique_streams = {stream['url']: stream for stream in live_streams}.values()
-        return list(unique_streams)
-        
-    except Exception as e:
-        print(f"Có lỗi xảy ra: {e}")
-        return []
+        except Exception as e:
+            print(f"Lỗi trong quá trình quét trình duyệt: {e}")
+        finally:
+            browser.close()
+            
+    # Lọc các link trùng lặp (nếu có)
+    unique_streams = {stream['url']: stream for stream in live_streams}.values()
+    return list(unique_streams)
 
 if __name__ == "__main__":
     channel = "https://www.youtube.com/@PowerRangersOfficial"
@@ -132,6 +81,6 @@ if __name__ == "__main__":
         print("\n✅ Đã lưu danh sách vào file: youtube_live.m3u")
     else:
         print("❌ Kênh hiện không có luồng trực tiếp nào.")
-        # Lưu file rỗng để không bị lỗi M3U
+        # Lưu file rỗng để không bị lỗi ứng dụng M3U
         with open("youtube_live.m3u", "w", encoding="utf-8") as f:
-            f.write("#EXTM3U\n")
+            f.write("#EXTM3U\n#EXTINF:-1 tvg-logo=\"\" group-title=\"Youtube Live\",Kênh hiện không có live\nhttps://www.youtube.com/watch?v=dQw4w9WgXcQ\n")
