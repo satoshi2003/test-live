@@ -21,8 +21,8 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        # Cài cả yt-dlp và streamlink
-        run: pip install yt-dlp streamlink
+        # Cài đặt requests để gửi Cookie giả lập và streamlink để bóc m3u8 gốc
+        run: pip install requests streamlink
 
       - name: Run Python script to generate M3U
         run: python get_live.py
