@@ -21,8 +21,8 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        # Cài đặt thư viện siêu việt yt-dlp
-        run: pip install yt-dlp
+        # Cài cả yt-dlp và streamlink
+        run: pip install yt-dlp streamlink
 
       - name: Run Python script to generate M3U
         run: python get_live.py
