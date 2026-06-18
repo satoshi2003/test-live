@@ -1,0 +1,38 @@
+name: Generate YouTube Live M3U
+
+on:
+  schedule:
+    - cron: '*/30 * * * *' # Cứ 30 phút chạy 1 lần tự động cập nhật
+  workflow_dispatch: # Cho phép chạy bằng tay
+
+jobs:
+  generate-m3u:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          # Cần fetch-depth 0 để có quyền commit lên lại repo
+          fetch-depth: 0 
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Python script to generate M3U
+        run: python get_live.py
+
+      - name: Commit and push changes
+        # Bước này sẽ kiểm tra xem file youtube_live.m3u có thay đổi hay được tạo mới không, nếu có thì đẩy lên
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add youtube_live.m3u
+          
+          # Chỉ commit nếu có sự thay đổi
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update YouTube live streams" && git push)
