@@ -21,10 +21,8 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        # Thay đổi ở đây: Cài đặt Playwright thay vì requests
-        run: |
-          pip install playwright
-          playwright install chromium
+        # Cài đặt thư viện siêu việt yt-dlp
+        run: pip install yt-dlp
 
       - name: Run Python script to generate M3U
         run: python get_live.py
